@@ -1,0 +1,1 @@
+example_files/6NOC_Monomer_H.pdb,example_files/rank1_confidence-0.48.sdf
