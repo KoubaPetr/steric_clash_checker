@@ -1,3 +1,4 @@
 data/PDBBind_processed/*
 data/user_predictions_test_17
 data/two_samples_p3_monomer.pse
+.idea/
