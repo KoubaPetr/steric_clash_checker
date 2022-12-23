@@ -1,4 +1,4 @@
-name: biopython
+name: clashCheckEnv
 channels:
   - conda-forge
   - defaults
@@ -54,4 +54,4 @@ dependencies:
       - rdkit==2022.9.3
       - scipy==1.9.3
       - sdf==0.3.5
-prefix: /Users/petrkouba/opt/miniconda3/envs/biopython
+prefix: /Users/petrkouba/opt/miniconda3/envs/clashCheckEnv
