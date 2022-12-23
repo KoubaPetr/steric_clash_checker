@@ -10,7 +10,7 @@ To install the conda environment run the command below. It was tested on Apple M
 ```bash
 git clone git@github.com:KoubaPetr/steric_clash_checker.git`
 cd steric_clash_checker/
-conda create --name clashCheckEnv`
+conda create --name clashCheckEnv
 conda activate clashCheckEnv
 ```
 
