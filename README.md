@@ -8,7 +8,7 @@ Easiest way is to run the tool inside a conda environment, for this you will nee
 To install the conda environment run the command below. It was tested on Apple Mac M1, for other platforms this might not work - refer to the version of the package in the `clashCheckEnv.yml` file.
 
 ```bash
-git clone git@github.com:KoubaPetr/steric_clash_checker.git`
+git clone git@github.com:KoubaPetr/steric_clash_checker.git
 cd steric_clash_checker/
 conda create --name clashCheckEnv
 conda activate clashCheckEnv
