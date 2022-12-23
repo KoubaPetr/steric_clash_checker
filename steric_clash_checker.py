@@ -18,7 +18,7 @@ TODO: Describe this file
 """
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--dataset_folder_path", default='example_files/user_predictions_testset', type=str, help="Path to the folder containing the subfolders holding the target PDB file and corresponding ligand pose .sdf files.")
+parser.add_argument("--dataset_folder_path", default='data/user_predictions_testset', type=str, help="Path to the folder containing the subfolders holding the target PDB file and corresponding ligand pose .sdf files.")
 parser.add_argument("--paths_file", default=None, type=str, help="Path to the file containing the target-ligand path pairs.")
 parser.add_argument("--treshold", default=0.4, type=float, help="Max distance between target-ligand atoms in Angstrom, so they are considered as clashing.")
 
@@ -207,7 +207,7 @@ class ComplexDataset:
 
 
     @staticmethod
-    def generate_path_file(folder_path: str = None, out_path: str = 'example_files/generated_pathfile.txt'):
+    def generate_path_file(folder_path: str = None, out_path: str = 'data/generated_pathfile.txt'):
         """
         Function to generate the pathfile of target-ligand path pairs, given a directory with prescribed structure,
         the directory is assumed to hold subdirectories, each containing one .pdb file corresponding to the protein and
@@ -261,8 +261,8 @@ if __name__=="__main__":
     if args.paths_file is not None:
         dataset = ComplexDataset(pathsfile_path=args.paths_file, clash_treshold=args.treshold)
     else:
-        ComplexDataset.generate_path_file(folder_path=args.dataset_folder_path, out_path='example_files/generated_pathfile.txt')
-        dataset = ComplexDataset(pathsfile_path='example_files/generated_pathfile.txt', clash_treshold=args.treshold)
+        ComplexDataset.generate_path_file(folder_path=args.dataset_folder_path, out_path='data/generated_pathfile.txt')
+        dataset = ComplexDataset(pathsfile_path='data/generated_pathfile.txt', clash_treshold=args.treshold)
 
     clashes_evaluation = dataset.evaluate_clashes_over_dataset()
 
@@ -272,9 +272,9 @@ if __name__=="__main__":
     logging.info(f"Exhibited ligand heavy atom v. target hydrogen atom steric clashes: {100*clashes_evaluation['hydrogen_clash_pct']:.2f}%")
     logging.info(f"Exhibited ligand heavy atom v. target all atom steric clashes: {100*clashes_evaluation['all_available_atom_clash_pct']:.2f}%")
 
-    # 1) find out the units in the coordinates (verify for each protein and ligand)
-    #   - seems so, checked by peptide bond around 1.35 - consistent (?) with literature: around 1.32
-    #TODO:
-    # 5) version this project
-    # 6) summarize the findings
-    # 7) do the checks for some of our results
+    #TODO: log the min distances for each target ligand pair
+    #TODO: log by percentiles (top10 poses etc)
+    #TODO: check their method
+    #TODO: run with our data
+    #TODO: log the examples of clashing atom pairs
+    #TODO: summarize into the google slides
