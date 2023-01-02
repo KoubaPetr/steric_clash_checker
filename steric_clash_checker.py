@@ -10,7 +10,7 @@ from sklearn.neighbors import KDTree as KDTree
 from dataclasses import dataclass, field
 from typing import Tuple, List, Dict, Any
 from tqdm import tqdm
-from collections import defaultdict
+
 """
 
 TODO: Describe this file 
@@ -22,6 +22,7 @@ parser.add_argument("--dataset_folder_path", default='data/user_predictions_test
 parser.add_argument("--paths_file", default=None, type=str, help="Path to the file containing the target-ligand path pairs.")
 parser.add_argument("--treshold", default=0.4, type=float, help="Max distance between target-ligand atoms in Angstrom, so they are considered as clashing.")
 parser.add_argument('--exclude_files', nargs='+', default=['rank1.sdf'])
+parser.add_argument('--log_to', type=str, default=None, help="Name of the file into which the logs should be printed. If not provided, it is printed into console.")
 
 @dataclass
 class Ligand:
@@ -30,6 +31,7 @@ class Ligand:
     num_heavy_atoms: int = None
     atom_coords: np.ndarray = None
     atom_ids: np.ndarray = None
+    ranking: int = None
 
 
     def __post_init__(self) -> None:
@@ -43,13 +45,12 @@ class Ligand:
         except:
             logging.warning("SKIPPING ligand pose: Encountered ligand pose with irregularity in the parsed dataframe.")
 
-    def get_ranking(self):
+    def set_ranking(self) -> int:
         """
         This assumes that the name of the ligand is in the form 'rank{n}'
-        :return:
+        :return: ranking of the ligand pose according to confidence, relative to other poses
         """
-        _ranking = self.name[4:]
-        return
+        self.ranking = int(self.name[4:])
 
 class Target:
     def __init__(self, path: str, name: str, silence_pdb_parser: bool = True):
@@ -108,6 +109,8 @@ class Target:
 class Complex:
     target: Target
     ligand: Ligand
+    heavy_mindist: float = None
+    hydrogen_mindist: float = None
     hydrogen_nn_dists: np.ndarray = None
     hydrogen_nn_idcs: np.ndarray = None
     heavy_nn_dists: np.ndarray = None
@@ -124,6 +127,8 @@ class Complex:
         """
         self.hydrogen_nn_dists, self.hydrogen_nn_idcs = self.target.hydrogen_kdtree.query(self.ligand.atom_coords)
         self.heavy_nn_dists, self.heavy_nn_idcs = self.target.heavy_atom_kdtree.query(self.ligand.atom_coords)
+        self.heavy_mindist = self.heavy_nn_dists.min()
+        self.hydrogen_mindist = self.hydrogen_nn_dists.min()
         self.clash_data['Heavy_atom'] = []
         self.clash_data['Hydrogen'] = []
 
@@ -136,17 +141,17 @@ class Complex:
                          default value = 0.4A (same as DiffDock paper)
         :return:  Tuple[bool, bool] - bool values for hydrogen/heavy atoms clashes
         """
-        self.hydrogen_clash = self.hydrogen_nn_dists.min() < treshold
-        self.heavy_atom_clash = self.heavy_nn_dists.min() < treshold
+        self.hydrogen_clash = self.hydrogen_mindist < treshold
+        self.heavy_atom_clash = self.heavy_mindist < treshold
         self.last_clash_treshold = treshold
         if self.heavy_atom_clash:
             for heavy_atom_idx, ligand_atom_idx in zip(self.heavy_nn_idcs[(self.heavy_nn_dists<treshold)[:,0]], self.ligand.atom_ids[(self.heavy_nn_dists<treshold)[:,0]]):
-                _clash_data = self.target.heavy_atom_id[heavy_atom_idx[0]], self.ligand.atom_ids[ligand_atom_idx]
+                _clash_data = self.target.heavy_atom_id[heavy_atom_idx[0]], self.ligand.atom_ids[ligand_atom_idx], self.heavy_mindist
                 self.clash_data['Heavy_atom'].append(_clash_data)
         if self.hydrogen_clash:
             for hydrogen_idx, ligand_atom_idx in zip(self.hydrogen_nn_idcs[self.hydrogen_nn_dists < treshold],
                                                        self.ligand.atom_ids[(self.hydrogen_nn_dists < treshold)[:,0]]):
-                _clash_data = self.target.hydrogen_id[hydrogen_idx], self.ligand.atom_ids[ligand_atom_idx]
+                _clash_data = self.target.hydrogen_id[hydrogen_idx], self.ligand.atom_ids[ligand_atom_idx], self.hydrogen_mindist
                 self.clash_data['Hydrogen'].append(_clash_data)
         return self.hydrogen_clash, self.heavy_atom_clash
 
@@ -154,11 +159,11 @@ class Complex:
         retVal = []
 
         for _clash_data in self.clash_data['Heavy_atom']:
-            _msg = f"Heavy atom clash: Target {self.target.name}, atom {_clash_data[0]} and Ligand {self.ligand.name}, atom {_clash_data[1]}"
+            _msg = f"Heavy atom clash: Target {self.target.name}, atom {_clash_data[0]} and Ligand {self.ligand.name}, atom {_clash_data[1]}, distance = {_clash_data[2]:.3f}"
             retVal.append(_msg)
 
         for _clash_data in self.clash_data['Hydrogen']:
-            _msg = f"Hydrogen clash: Target {self.target.name}, atom {_clash_data[0]} and Ligand {self.ligand.name}, atom {_clash_data[1]}"
+            _msg = f"Hydrogen clash: Target {self.target.name}, atom {_clash_data[0]} and Ligand {self.ligand.name}, atom {_clash_data[1]}, distance = {_clash_data[2]:.3f}"
             retVal.append(_msg)
         return retVal
 
@@ -249,19 +254,13 @@ class ComplexDataset:
                   'hydrogen_clash_pct': hydrogen_clash_percentage, 'all_available_atom_clash_pct': all_clashes}
         return retVal
 
-    def report_clashes(self, outfile: str = None):
+    def report_clashes(self):
         all_clashes = ["-----------------------REPORTING CLASHES-----------------------\n"]
         for cplx in self.complexes:
             all_clashes.extend(cplx.report_clashes_for_complex())
 
-        if not outfile:
-            for msg in all_clashes:
-                logging.info(msg)
-        else:
-            with open(outfile,'w') as file:
-                logging.basicConfig(outfile, 'w', level=logging.INFO)
-                for msg in all_clashes:
-                    logging.info(msg)
+        for msg in all_clashes:
+            logging.info(msg)
 
     @staticmethod
     def generate_path_file(folder_path: str = None, exclude_files: List[str] = None, out_path: str = 'data/generated_pathfile.txt'):
@@ -313,7 +312,10 @@ class ComplexDataset:
 if __name__=="__main__":
 
     args = parser.parse_args()
-    logging.basicConfig(level='INFO')
+    if args.log_to:
+        logging.basicConfig(filename=f'logs/{args.log_to}', filemode='w', encoding='utf-8', level='INFO')
+    else:
+        logging.basicConfig(level='INFO')
 
     if args.paths_file is not None:
         dataset = ComplexDataset(pathsfile_path=args.paths_file, clash_treshold=args.treshold)
@@ -331,10 +333,10 @@ if __name__=="__main__":
 
     dataset.report_clashes()
 
-    #TODO: log the min distances for each target ligand pair
-    #TODO: save the target and ligand names
+    #TODO: log the min distances for each target ligand pair - DONE
+    #TODO: save the target and ligand names - DONE
     #TODO: log by percentiles (top10 poses etc)
     #TODO: check their method
     #TODO: run with our data
-    #TODO: log the examples of clashing atom pairs
+    #TODO: log the examples of clashing atom pairs - DONE
     #TODO: summarize into the google slides
