@@ -23,6 +23,7 @@ parser.add_argument("--paths_file", default=None, type=str, help="Path to the fi
 parser.add_argument("--treshold", default=0.4, type=float, help="Max distance between target-ligand atoms in Angstrom, so they are considered as clashing.")
 parser.add_argument('--exclude_files', nargs='+', default=['rank1.sdf'])
 parser.add_argument('--log_to', type=str, default=None, help="Name of the file into which the logs should be printed. If not provided, it is printed into console.")
+parser.add_argument('--max_ranking', type=int, default=None, help="Name of the file into which the logs should be printed. If not provided, it is printed into console.")
 
 @dataclass
 class Ligand:
@@ -33,7 +34,6 @@ class Ligand:
     atom_ids: np.ndarray = None
     ranking: int = None
 
-
     def __post_init__(self) -> None:
         try:
             self.num_heavy_atoms = self.parsed_df['ROMol'][0].GetNumHeavyAtoms()
@@ -42,15 +42,9 @@ class Ligand:
             conformer: Conformer = self.parsed_df['ROMol'][0].GetConformer() #TODO: verify if the hydrogens are not messing up the order
             self.atom_coords = np.array([conformer.GetAtomPosition(a_idx) for a_idx in range(self.num_heavy_atoms)])
             self.atom_ids = np.array([a.GetIdx() for a in self.parsed_df['ROMol'][0].GetAtoms()])
+            self.ranking = int(self.name[4:]) #This assumes that the name of the ligand is in the form 'rank{n}'
         except:
             logging.warning("SKIPPING ligand pose: Encountered ligand pose with irregularity in the parsed dataframe.")
-
-    def set_ranking(self) -> int:
-        """
-        This assumes that the name of the ligand is in the form 'rank{n}'
-        :return: ranking of the ligand pose according to confidence, relative to other poses
-        """
-        self.ranking = int(self.name[4:])
 
 class Target:
     def __init__(self, path: str, name: str, silence_pdb_parser: bool = True):
@@ -233,21 +227,22 @@ class ComplexDataset:
             _complex.check_clashes(treshold=self.clash_treshold)
             self.complexes.append(_complex)
 
-    def evaluate_clashes_over_dataset(self) -> Dict[str,float]:
+    def evaluate_clashes_over_dataset(self, max_ranking: int = None) -> Dict[str,float]:
         """
         Iterate over the complexes in the dataset and read the statements on clashes and produce summary for the dataset
         :return:
         """
         heavy_clashes, heavy_non_clashes, hydrogen_clashes, hydrogen_non_clashes = 0,0,0,0
         for cplx in self.complexes:
-            heavy_clashes += cplx.heavy_atom_clash
-            heavy_non_clashes += (not cplx.heavy_atom_clash)
-            hydrogen_clashes += cplx.hydrogen_clash
-            hydrogen_non_clashes += (not cplx.hydrogen_clash)
+            if max_ranking is not None and cplx.ligand.ranking < max_ranking:
+                heavy_clashes += cplx.heavy_atom_clash
+                heavy_non_clashes += (not cplx.heavy_atom_clash)
+                hydrogen_clashes += cplx.hydrogen_clash
+                hydrogen_non_clashes += (not cplx.hydrogen_clash)
 
         data_samples = heavy_clashes+heavy_non_clashes
-        heavy_clash_percentage = heavy_clashes/data_samples
-        hydrogen_clash_percentage = hydrogen_clashes/data_samples
+        heavy_clash_percentage = heavy_clashes/data_samples if data_samples > 0 else 0
+        hydrogen_clash_percentage = hydrogen_clashes/data_samples if data_samples > 0 else 0
         assert data_samples == (hydrogen_clashes+hydrogen_non_clashes), "Discrepancy between number of examined heavy atom and hydrogen clashes"
         all_clashes = heavy_clash_percentage + hydrogen_clash_percentage
         retVal = {'data_samples': data_samples, 'heavy_atom_clash_pct': heavy_clash_percentage,
@@ -323,11 +318,12 @@ if __name__=="__main__":
         ComplexDataset.generate_path_file(folder_path=args.dataset_folder_path, exclude_files=args.exclude_files, out_path='data/generated_pathfile.txt')
         dataset = ComplexDataset(pathsfile_path='data/generated_pathfile.txt', clash_treshold=args.treshold)
 
-    clashes_evaluation = dataset.evaluate_clashes_over_dataset()
+    clashes_evaluation = dataset.evaluate_clashes_over_dataset(max_ranking=args.max_ranking)
 
     logging.info(f"The examined dataset held {clashes_evaluation['data_samples']} data samples.")
     logging.info(f"The treshold of {args.treshold} Angstrom was used for evaluation of clashes.")
-    logging.info(f"Exhibited ligand heavy atom v. target heavy atom steric clashes: {100*clashes_evaluation['heavy_atom_clash_pct']:.2f}%")
+    _max_ranking_msg = f' (considering top {args.max_ranking} poses)' if args.max_ranking else ""
+    logging.info(f"Exhibited ligand heavy atom v. target heavy atom steric clashes: {100*clashes_evaluation['heavy_atom_clash_pct']:.2f}%{_max_ranking_msg}")
     logging.info(f"Exhibited ligand heavy atom v. target hydrogen atom steric clashes: {100*clashes_evaluation['hydrogen_clash_pct']:.2f}%")
     logging.info(f"Exhibited ligand heavy atom v. target all atom steric clashes: {100*clashes_evaluation['all_available_atom_clash_pct']:.2f}%")
 
@@ -335,7 +331,7 @@ if __name__=="__main__":
 
     #TODO: log the min distances for each target ligand pair - DONE
     #TODO: save the target and ligand names - DONE
-    #TODO: log by percentiles (top10 poses etc)
+    #TODO: log by percentiles (top10 poses etc) - DONE
     #TODO: check their method
     #TODO: run with our data
     #TODO: log the examples of clashing atom pairs - DONE
