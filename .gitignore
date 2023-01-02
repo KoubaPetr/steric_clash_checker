@@ -1,5 +1,7 @@
 data/PDBBind_processed/*
+!data/PDBBind_processed/.gitkeep
 data/user_predictions_test_17
+data/saltuk_data_p1_p8/*
 data/two_samples_p3_monomer.pse
 .idea/
 logs/*
