@@ -17,7 +17,7 @@ conda activate clashCheckEnv
 ## Example
 
 ```bash
-python steric_clash_checker.py --dataset_folder_path data/user_predictions_testset --treshold 0.4
+python steric_clash_checker.py --dataset_folder_path data/user_predictions_testset --treshold 0.4 --log_to logs.txt --max_ranking 10
 ```
 
 ### How to adapt to your data
@@ -28,7 +28,7 @@ python steric_clash_checker.py --dataset_folder_path data/user_predictions_tests
 4) Run:
 
     ```bash
-    python steric_clash_checker.py --dataset_folder_path data/YOUR_DIR --treshold 0.4
+    python steric_clash_checker.py --dataset_folder_path data/YOUR_DIR --treshold 0.4 --log_to logs.txt --max_ranking 10
     ```
    
 By default, we use the treshold of 0.4 Angstrom to consider an atom pair as clashing, but you can specify your own value.
