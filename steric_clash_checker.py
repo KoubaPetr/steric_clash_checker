@@ -7,10 +7,10 @@ from rdkit.Chem import PandasTools
 from rdkit.Chem.rdchem import Conformer
 from pandas import DataFrame as df
 from sklearn.neighbors import KDTree as KDTree
-from dataclasses import dataclass
-from typing import Tuple, List, Dict
+from dataclasses import dataclass, field
+from typing import Tuple, List, Dict, Any
 from tqdm import tqdm
-
+from collections import defaultdict
 """
 
 TODO: Describe this file 
@@ -21,6 +21,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--dataset_folder_path", default='data/user_predictions_testset', type=str, help="Path to the folder containing the subfolders holding the target PDB file and corresponding ligand pose .sdf files.")
 parser.add_argument("--paths_file", default=None, type=str, help="Path to the file containing the target-ligand path pairs.")
 parser.add_argument("--treshold", default=0.4, type=float, help="Max distance between target-ligand atoms in Angstrom, so they are considered as clashing.")
+parser.add_argument('--exclude_files', nargs='+', default=['rank1.sdf'])
 
 @dataclass
 class Ligand:
@@ -28,14 +29,27 @@ class Ligand:
     name: str = None
     num_heavy_atoms: int = None
     atom_coords: np.ndarray = None
+    atom_ids: np.ndarray = None
+
 
     def __post_init__(self) -> None:
         try:
             self.num_heavy_atoms = self.parsed_df['ROMol'][0].GetNumHeavyAtoms()
-            conformer: Conformer = self.parsed_df['ROMol'][0].GetConformer()
+            if not len(self.parsed_df['ROMol'][0].GetAtoms())==self.parsed_df['ROMol'][0].GetNumHeavyAtoms():
+                raise ValueError("There are some unhandled hydrogens in the ligand!")
+            conformer: Conformer = self.parsed_df['ROMol'][0].GetConformer() #TODO: verify if the hydrogens are not messing up the order
             self.atom_coords = np.array([conformer.GetAtomPosition(a_idx) for a_idx in range(self.num_heavy_atoms)])
+            self.atom_ids = np.array([a.GetIdx() for a in self.parsed_df['ROMol'][0].GetAtoms()])
         except:
             logging.warning("SKIPPING ligand pose: Encountered ligand pose with irregularity in the parsed dataframe.")
+
+    def get_ranking(self):
+        """
+        This assumes that the name of the ligand is in the form 'rank{n}'
+        :return:
+        """
+        _ranking = self.name[4:]
+        return
 
 class Target:
     def __init__(self, path: str, name: str, silence_pdb_parser: bool = True):
@@ -46,6 +60,8 @@ class Target:
         self.residues = None
         self.heavy_atom_coords = []
         self.hydrogen_coords = []
+        self.heavy_atom_id = []
+        self.hydrogen_id = []
         self.get_residues()
         self.get_atoms()
         self.heavy_atom_kdtree = None
@@ -70,8 +86,10 @@ class Target:
                 is_heavy = False if atom.name == 'H' else True # The separtion is strictly into 'H' and heavy atoms, right?
                 if is_heavy:
                     self.heavy_atom_coords.append(atom_xyz) #TODO: maybe keep the reference to the atom?
+                    self.heavy_atom_id.append(atom.full_id)
                 else:
                     self.hydrogen_coords.append(atom_xyz)
+                    self.hydrogen_id.append(atom.full_id)
         logging.debug('Finished reading atoms for the target protein')
 
     def build_kdtrees(self) -> None:
@@ -97,6 +115,7 @@ class Complex:
     heavy_atom_clash: bool = None
     hydrogen_clash: bool = None
     last_clash_treshold: float = None
+    clash_data: Dict[str,List[Tuple[Tuple[Any],int]]] = field(default_factory=dict)
 
     def __post_init__(self):
         """
@@ -105,10 +124,12 @@ class Complex:
         """
         self.hydrogen_nn_dists, self.hydrogen_nn_idcs = self.target.hydrogen_kdtree.query(self.ligand.atom_coords)
         self.heavy_nn_dists, self.heavy_nn_idcs = self.target.heavy_atom_kdtree.query(self.ligand.atom_coords)
+        self.clash_data['Heavy_atom'] = []
+        self.clash_data['Hydrogen'] = []
 
     def check_clashes(self, treshold: float = 0.4) -> Tuple[bool,bool]:
         """
-        Function to check steric clashes given a treshold on a minimum allowed distance 
+        Function to check steric clashes given a treshold on a minimum allowed distance
         of a ligand atom (only heavy atoms for now) and target atoms (both heavy and hydrogen atoms).
 
         :param treshold: in Angstroms, minimum allowed distance for non-clashing atoms,
@@ -118,7 +139,28 @@ class Complex:
         self.hydrogen_clash = self.hydrogen_nn_dists.min() < treshold
         self.heavy_atom_clash = self.heavy_nn_dists.min() < treshold
         self.last_clash_treshold = treshold
+        if self.heavy_atom_clash:
+            for heavy_atom_idx, ligand_atom_idx in zip(self.heavy_nn_idcs[(self.heavy_nn_dists<treshold)[:,0]], self.ligand.atom_ids[(self.heavy_nn_dists<treshold)[:,0]]):
+                _clash_data = self.target.heavy_atom_id[heavy_atom_idx[0]], self.ligand.atom_ids[ligand_atom_idx]
+                self.clash_data['Heavy_atom'].append(_clash_data)
+        if self.hydrogen_clash:
+            for hydrogen_idx, ligand_atom_idx in zip(self.hydrogen_nn_idcs[self.hydrogen_nn_dists < treshold],
+                                                       self.ligand.atom_ids[(self.hydrogen_nn_dists < treshold)[:,0]]):
+                _clash_data = self.target.hydrogen_id[hydrogen_idx], self.ligand.atom_ids[ligand_atom_idx]
+                self.clash_data['Hydrogen'].append(_clash_data)
         return self.hydrogen_clash, self.heavy_atom_clash
+
+    def report_clashes_for_complex(self) -> List[str]:
+        retVal = []
+
+        for _clash_data in self.clash_data['Heavy_atom']:
+            _msg = f"Heavy atom clash: Target {self.target.name}, atom {_clash_data[0]} and Ligand {self.ligand.name}, atom {_clash_data[1]}"
+            retVal.append(_msg)
+
+        for _clash_data in self.clash_data['Hydrogen']:
+            _msg = f"Hydrogen clash: Target {self.target.name}, atom {_clash_data[0]} and Ligand {self.ligand.name}, atom {_clash_data[1]}"
+            retVal.append(_msg)
+        return retVal
 
 
 class ComplexDataset:
@@ -170,12 +212,14 @@ class ComplexDataset:
             if target_path in _targets.keys():
                 _target = _targets[target_path]
             else:
-                _target = Target(target_path, " ")
+                _target_name = target_path.split('/')[-1].split('.')[-2].split('_')[0] #Also this assumes particular naming of the pdb file */protein_name_*.pdb
+                _target = Target(target_path, _target_name)
                 _target.build_kdtrees()
                 _targets[target_path] = _target
 
             _ligand_df = PandasTools.LoadSDF(ligand_path)
-            _ligand = Ligand(_ligand_df)
+            _ligand_name = ligand_path.split('/')[-1].split('_')[0] #This requires standartization of the file names - for now we name the ligand just by its rank according to the confidence - e.g. we assume to pass here name='rank2'
+            _ligand = Ligand(_ligand_df, name=_ligand_name)
             if _ligand.atom_coords is None:
                 logging.warning("Skipped complex.")
                 continue
@@ -205,9 +249,22 @@ class ComplexDataset:
                   'hydrogen_clash_pct': hydrogen_clash_percentage, 'all_available_atom_clash_pct': all_clashes}
         return retVal
 
+    def report_clashes(self, outfile: str = None):
+        all_clashes = ["-----------------------REPORTING CLASHES-----------------------\n"]
+        for cplx in self.complexes:
+            all_clashes.extend(cplx.report_clashes_for_complex())
+
+        if not outfile:
+            for msg in all_clashes:
+                logging.info(msg)
+        else:
+            with open(outfile,'w') as file:
+                logging.basicConfig(outfile, 'w', level=logging.INFO)
+                for msg in all_clashes:
+                    logging.info(msg)
 
     @staticmethod
-    def generate_path_file(folder_path: str = None, out_path: str = 'data/generated_pathfile.txt'):
+    def generate_path_file(folder_path: str = None, exclude_files: List[str] = None, out_path: str = 'data/generated_pathfile.txt'):
         """
         Function to generate the pathfile of target-ligand path pairs, given a directory with prescribed structure,
         the directory is assumed to hold subdirectories, each containing one .pdb file corresponding to the protein and
@@ -228,7 +285,7 @@ class ComplexDataset:
             for f_name in file_names:
                 _dot_split = f_name.split('.')
                 if _dot_split[-1] == 'sdf':
-                    if f_name == "rank1.sdf":
+                    if f_name in exclude_files:
                         logging.debug("Skipping rank1.sdf file as it is assumed to be duplicit.")
                         continue
                     ligand_paths.append(os.path.join(target_folder,f_name))
@@ -261,7 +318,7 @@ if __name__=="__main__":
     if args.paths_file is not None:
         dataset = ComplexDataset(pathsfile_path=args.paths_file, clash_treshold=args.treshold)
     else:
-        ComplexDataset.generate_path_file(folder_path=args.dataset_folder_path, out_path='data/generated_pathfile.txt')
+        ComplexDataset.generate_path_file(folder_path=args.dataset_folder_path, exclude_files=args.exclude_files, out_path='data/generated_pathfile.txt')
         dataset = ComplexDataset(pathsfile_path='data/generated_pathfile.txt', clash_treshold=args.treshold)
 
     clashes_evaluation = dataset.evaluate_clashes_over_dataset()
@@ -272,7 +329,10 @@ if __name__=="__main__":
     logging.info(f"Exhibited ligand heavy atom v. target hydrogen atom steric clashes: {100*clashes_evaluation['hydrogen_clash_pct']:.2f}%")
     logging.info(f"Exhibited ligand heavy atom v. target all atom steric clashes: {100*clashes_evaluation['all_available_atom_clash_pct']:.2f}%")
 
+    dataset.report_clashes()
+
     #TODO: log the min distances for each target ligand pair
+    #TODO: save the target and ligand names
     #TODO: log by percentiles (top10 poses etc)
     #TODO: check their method
     #TODO: run with our data
