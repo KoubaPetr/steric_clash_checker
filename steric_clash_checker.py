@@ -227,6 +227,7 @@ class ComplexDataset:
             _ligand_path_split = ligand_path.split('/')
             _ligand_name = _ligand_path_split[-2].split('_')[-2].split('-')[-1] + '-' + _ligand_path_split[-1].split('_')[0] #This requires standartization of the file names - for now we name the ligand just by its rank according to the confidence - e.g. we assume to pass here name='rank2'
             _ligand = Ligand(_ligand_df, name=_ligand_name)
+
             if _ligand.atom_coords is None:
                 logging.warning("Skipped complex.")
                 continue
