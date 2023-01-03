@@ -80,7 +80,7 @@ class Target:
         for residue in self.residues:
             for atom in residue:
                 atom_xyz = atom.coord
-                is_heavy = False if atom.name == 'H' else True # The separtion is strictly into 'H' and heavy atoms, right?
+                is_heavy = False if atom.element == 'H' else True # The separtion is strictly into 'H' and heavy atoms, right?
                 if is_heavy:
                     self.heavy_atom_coords.append(atom_xyz) #TODO: maybe keep the reference to the atom?
                     self.heavy_atom_id.append(atom.full_id)
