@@ -10,6 +10,7 @@ from sklearn.neighbors import KDTree as KDTree
 from dataclasses import dataclass, field
 from typing import Tuple, List, Dict, Any
 from tqdm import tqdm
+from biopandas.mol2 import PandasMol2
 
 """
 
@@ -18,7 +19,7 @@ TODO: Describe this file
 """
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--dataset_folder_path", default='data/user_predictions_testset', type=str, help="Path to the folder containing the subfolders holding the target PDB file and corresponding ligand pose .sdf files.")
+parser.add_argument("--dataset_folder_path", default='data/PDBBind_processed', type=str, help="Path to the folder containing the subfolders holding the target PDB file and corresponding ligand pose .sdf files.")
 parser.add_argument("--paths_file", default=None, type=str, help="Path to the file containing the target-ligand path pairs.")
 parser.add_argument("--treshold", default=0.4, type=float, help="Max distance between target-ligand atoms in Angstrom, so they are considered as clashing.")
 parser.add_argument('--exclude_files', nargs='+', default=['rank1.sdf'])
@@ -26,6 +27,8 @@ parser.add_argument('--log_to', type=str, default=None, help="Name of the file i
 parser.add_argument('--max_ranking', type=int, default=None, help="Name of the file into which the logs should be printed. If not provided, it is printed into console.")
 parser.add_argument('--ligand_name_included', action='store_true', help="Provide this flag, if the name of the ligand is provided in the folder name containing the data, within the dataset folder. Required format is *-LIGANDNAME_a.sdf.")
 parser.add_argument('--extra_target_discrimination', action='store_true', help="Provide this flag, if the name of the target in the form of pdb file is duplicit and it needs extra characters provided after the pdb code to distinguish the targets. Required format is PDBCODE_EXTRAID_*.pdb.")
+parser.add_argument('--rank_named', action='store_true', help="Provide this flag, if the name of the ligand contains the ranking wrt the diffdock confidence.")
+parser.add_argument('--ligand_format', type=str, default='mol2', help="Choose 'sdf' or 'mol2' as a ligand format.")
 
 @dataclass
 class Ligand:
@@ -222,10 +225,18 @@ class ComplexDataset:
                 _target = Target(target_path, _target_name)
                 _target.build_kdtrees()
                 _targets[target_path] = _target
-
-            _ligand_df = PandasTools.LoadSDF(ligand_path)
+            _ligand_filetype = ligand_path.split('.')[-1].lower()
+            if _ligand_filetype == 'sdf':
+                _ligand_df = PandasTools.LoadSDF(ligand_path)
+            elif _ligand_filetype == 'mol2':
+                _ligand_df = PandasMol2().read_mol2(ligand_path)
+            else:
+                raise ValueError(f'Unsupported ligand filetype {_ligand_filetype}.')
             _ligand_path_split = ligand_path.split('/')
-            _ligand_name = _ligand_path_split[-2].split('_')[-2].split('-')[-1] + '-' + _ligand_path_split[-1].split('_')[0] #This requires standartization of the file names - for now we name the ligand just by its rank according to the confidence - e.g. we assume to pass here name='rank2'
+            if args.rank_named:
+                _ligand_name = _ligand_path_split[-2].split('_')[-2].split('-')[-1] + '-' + _ligand_path_split[-1].split('_')[0] #This requires standartization of the file names - for now we name the ligand just by its rank according to the confidence - e.g. we assume to pass here name='rank2'
+            else:
+                _ligand_name = _ligand_path_split[-1].split('.')[-2]
             _ligand = Ligand(_ligand_df, name=_ligand_name)
             if _ligand.atom_coords is None:
                 logging.warning("Skipped complex.")
@@ -266,7 +277,7 @@ class ComplexDataset:
             logging.info(msg)
 
     @staticmethod
-    def generate_path_file(folder_path: str = None, exclude_files: List[str] = None, out_path: str = 'data/generated_pathfile.txt'):
+    def generate_path_file(folder_path: str = None, exclude_files: List[str] = None, out_path: str = 'data/generated_pathfile.txt', ligand_format='sdf'):
         """
         Function to generate the pathfile of target-ligand path pairs, given a directory with prescribed structure,
         the directory is assumed to hold subdirectories, each containing one .pdb file corresponding to the protein and
@@ -278,6 +289,9 @@ class ComplexDataset:
         subdir_paths = [os.path.join(folder_path,p) for p in subdirs]
         output_lines = []
 
+        if ligand_format not in ['sdf', 'mol2']:
+            raise ValueError(f'Unsupported ligand format {ligand_format}')
+
         for target_folder in subdir_paths:
             file_names = os.listdir(target_folder)
             sdfs = 0
@@ -286,7 +300,7 @@ class ComplexDataset:
 
             for f_name in file_names:
                 _dot_split = f_name.split('.')
-                if _dot_split[-1] == 'sdf':
+                if _dot_split[-1] == ligand_format:
                     if f_name in exclude_files:
                         logging.debug("Skipping rank1.sdf file as it is assumed to be duplicit.")
                         continue
@@ -301,7 +315,7 @@ class ComplexDataset:
                         raise ValueError(
                             "In the provided folder is more than 1 PDB file, not sure which to use as target.")
                 else:
-                    logging.warning(f'Non-pdb and non-sdf file {f_name} encountered in the folder {os.path.join(target_folder)}')
+                    logging.warning(f'Non-pdb and non-{ligand_format} file {f_name} encountered in the folder {os.path.join(target_folder)}')
 
             for lig_path in ligand_paths:
                 line = target_path+','+lig_path+'\n'
@@ -323,7 +337,7 @@ if __name__=="__main__":
     if args.paths_file is not None:
         dataset = ComplexDataset(pathsfile_path=args.paths_file, clash_treshold=args.treshold)
     else:
-        ComplexDataset.generate_path_file(folder_path=args.dataset_folder_path, exclude_files=args.exclude_files, out_path='data/generated_pathfile.txt')
+        ComplexDataset.generate_path_file(folder_path=args.dataset_folder_path, exclude_files=args.exclude_files, out_path='data/generated_pathfile.txt', ligand_format=args.ligand_format)
         dataset = ComplexDataset(pathsfile_path='data/generated_pathfile.txt', clash_treshold=args.treshold)
 
     clashes_evaluation = dataset.evaluate_clashes_over_dataset(max_ranking=args.max_ranking)
