@@ -144,12 +144,12 @@ class Complex:
             self.last_clash_treshold = treshold
             if self.heavy_atom_clash:
                 for heavy_atom_idx, ligand_atom_idx in zip(self.heavy_nn_idcs[(self.heavy_nn_dists<treshold)[:,0]], self.ligand.atom_ids[(self.heavy_nn_dists<treshold)[:,0]]):
-                    _clash_data = self.target.heavy_atom_id[heavy_atom_idx[0]], self.ligand.atom_ids[ligand_atom_idx], self.heavy_mindist
+                    _clash_data = f"res = {self.target.heavy_atom_id[heavy_atom_idx[0]][3][1]}, atom = {self.target.heavy_atom_id[heavy_atom_idx[0]][4][0]}", self.ligand.atom_ids[ligand_atom_idx], self.heavy_mindist
                     self.clash_data['Heavy_atom'].append(_clash_data)
             if self.hydrogen_clash:
                 for hydrogen_idx, ligand_atom_idx in zip(self.hydrogen_nn_idcs[self.hydrogen_nn_dists < treshold],
                                                            self.ligand.atom_ids[(self.hydrogen_nn_dists < treshold)[:,0]]):
-                    _clash_data = self.target.hydrogen_id[hydrogen_idx], self.ligand.atom_ids[ligand_atom_idx], self.hydrogen_mindist
+                    _clash_data = f"res = {self.target.hydrogen_id[hydrogen_idx][3][1]}, atom = {self.target.hydrogen_id[hydrogen_idx][4][0]}", self.ligand.atom_ids[ligand_atom_idx], self.hydrogen_mindist
                     self.clash_data['Hydrogen'].append(_clash_data)
             return self.hydrogen_clash, self.heavy_atom_clash
         else:
@@ -159,11 +159,11 @@ class Complex:
         retVal = []
 
         for _clash_data in self.clash_data['Heavy_atom']:
-            _msg = f"Heavy atom clash: Target {self.target.name}, atom {_clash_data[0]} and Ligand {self.ligand.name}, atom {_clash_data[1]}, distance = {_clash_data[2]:.3f}"
+            _msg = f"Heavy atom clash: Target {self.target.name}, {_clash_data[0]} and Ligand {self.ligand.name}, atom {_clash_data[1]}, distance = {_clash_data[2]:.3f}"
             retVal.append(_msg)
 
         for _clash_data in self.clash_data['Hydrogen']:
-            _msg = f"Hydrogen clash: Target {self.target.name}, atom {_clash_data[0]} and Ligand {self.ligand.name}, atom {_clash_data[1]}, distance = {_clash_data[2]:.3f}"
+            _msg = f"Hydrogen clash: Target {self.target.name}, {_clash_data[0]} and Ligand {self.ligand.name}, atom {_clash_data[1]}, distance = {_clash_data[2]:.3f}"
             retVal.append(_msg)
         return retVal
 
