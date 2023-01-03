@@ -6,3 +6,4 @@ data/two_samples_p3_monomer.pse
 .idea/
 logs/*
 !logs/.gitkeep
+data/generated_pathfile.txt

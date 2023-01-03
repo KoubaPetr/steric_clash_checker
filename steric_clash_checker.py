@@ -24,6 +24,8 @@ parser.add_argument("--treshold", default=0.4, type=float, help="Max distance be
 parser.add_argument('--exclude_files', nargs='+', default=['rank1.sdf'])
 parser.add_argument('--log_to', type=str, default=None, help="Name of the file into which the logs should be printed. If not provided, it is printed into console.")
 parser.add_argument('--max_ranking', type=int, default=None, help="Name of the file into which the logs should be printed. If not provided, it is printed into console.")
+parser.add_argument('--ligand_name_included', action='store_true', help="Provide this flag, if the name of the ligand is provided in the folder name containing the data, within the dataset folder. Required format is *-LIGANDNAME_a.sdf.")
+parser.add_argument('--extra_target_discrimination', action='store_true', help="Provide this flag, if the name of the target in the form of pdb file is duplicit and it needs extra characters provided after the pdb code to distinguish the targets. Required format is PDBCODE_EXTRAID_*.pdb.")
 
 @dataclass
 class Ligand:
@@ -42,7 +44,7 @@ class Ligand:
             conformer: Conformer = self.parsed_df['ROMol'][0].GetConformer() #TODO: verify if the hydrogens are not messing up the order
             self.atom_coords = np.array([conformer.GetAtomPosition(a_idx) for a_idx in range(self.num_heavy_atoms)])
             self.atom_ids = np.array([a.GetIdx() for a in self.parsed_df['ROMol'][0].GetAtoms()])
-            self.ranking = int(self.name[4:]) #This assumes that the name of the ligand is in the form 'rank{n}'
+            self.ranking = int(self.name.split('-')[-1][4:]) #This assumes that the name of the ligand is in the form 'rank{n}'
         except:
             logging.warning("SKIPPING ligand pose: Encountered ligand pose with irregularity in the parsed dataframe.")
 
@@ -126,28 +128,32 @@ class Complex:
         self.clash_data['Heavy_atom'] = []
         self.clash_data['Hydrogen'] = []
 
-    def check_clashes(self, treshold: float = 0.4) -> Tuple[bool,bool]:
+    def check_clashes(self, treshold: float = 0.4, max_ranking=None) -> Tuple[bool,bool]:
         """
         Function to check steric clashes given a treshold on a minimum allowed distance
         of a ligand atom (only heavy atoms for now) and target atoms (both heavy and hydrogen atoms).
 
         :param treshold: in Angstroms, minimum allowed distance for non-clashing atoms,
                          default value = 0.4A (same as DiffDock paper)
+        :param max_ranking: int, max ranking of the pose according to the diffdock confidence to check for the clash
         :return:  Tuple[bool, bool] - bool values for hydrogen/heavy atoms clashes
         """
-        self.hydrogen_clash = self.hydrogen_mindist < treshold
-        self.heavy_atom_clash = self.heavy_mindist < treshold
-        self.last_clash_treshold = treshold
-        if self.heavy_atom_clash:
-            for heavy_atom_idx, ligand_atom_idx in zip(self.heavy_nn_idcs[(self.heavy_nn_dists<treshold)[:,0]], self.ligand.atom_ids[(self.heavy_nn_dists<treshold)[:,0]]):
-                _clash_data = self.target.heavy_atom_id[heavy_atom_idx[0]], self.ligand.atom_ids[ligand_atom_idx], self.heavy_mindist
-                self.clash_data['Heavy_atom'].append(_clash_data)
-        if self.hydrogen_clash:
-            for hydrogen_idx, ligand_atom_idx in zip(self.hydrogen_nn_idcs[self.hydrogen_nn_dists < treshold],
-                                                       self.ligand.atom_ids[(self.hydrogen_nn_dists < treshold)[:,0]]):
-                _clash_data = self.target.hydrogen_id[hydrogen_idx], self.ligand.atom_ids[ligand_atom_idx], self.hydrogen_mindist
-                self.clash_data['Hydrogen'].append(_clash_data)
-        return self.hydrogen_clash, self.heavy_atom_clash
+        if not max_ranking or self.ligand.ranking <=max_ranking:
+            self.hydrogen_clash = self.hydrogen_mindist < treshold
+            self.heavy_atom_clash = self.heavy_mindist < treshold
+            self.last_clash_treshold = treshold
+            if self.heavy_atom_clash:
+                for heavy_atom_idx, ligand_atom_idx in zip(self.heavy_nn_idcs[(self.heavy_nn_dists<treshold)[:,0]], self.ligand.atom_ids[(self.heavy_nn_dists<treshold)[:,0]]):
+                    _clash_data = self.target.heavy_atom_id[heavy_atom_idx[0]], self.ligand.atom_ids[ligand_atom_idx], self.heavy_mindist
+                    self.clash_data['Heavy_atom'].append(_clash_data)
+            if self.hydrogen_clash:
+                for hydrogen_idx, ligand_atom_idx in zip(self.hydrogen_nn_idcs[self.hydrogen_nn_dists < treshold],
+                                                           self.ligand.atom_ids[(self.hydrogen_nn_dists < treshold)[:,0]]):
+                    _clash_data = self.target.hydrogen_id[hydrogen_idx], self.ligand.atom_ids[ligand_atom_idx], self.hydrogen_mindist
+                    self.clash_data['Hydrogen'].append(_clash_data)
+            return self.hydrogen_clash, self.heavy_atom_clash
+        else:
+            return None, None
 
     def report_clashes_for_complex(self) -> List[str]:
         retVal = []
@@ -211,20 +217,22 @@ class ComplexDataset:
             if target_path in _targets.keys():
                 _target = _targets[target_path]
             else:
-                _target_name = target_path.split('/')[-1].split('.')[-2].split('_')[0] #Also this assumes particular naming of the pdb file */protein_name_*.pdb
+                _target_name_split = target_path.split('/')[-1].split('.')[-2].split('_')
+                _target_name = _target_name_split[0]+'-'+_target_name_split[1] #Also this assumes particular naming of the pdb file */protein_name_*.pdb
                 _target = Target(target_path, _target_name)
                 _target.build_kdtrees()
                 _targets[target_path] = _target
 
             _ligand_df = PandasTools.LoadSDF(ligand_path)
-            _ligand_name = ligand_path.split('/')[-1].split('_')[0] #This requires standartization of the file names - for now we name the ligand just by its rank according to the confidence - e.g. we assume to pass here name='rank2'
+            _ligand_path_split = ligand_path.split('/')
+            _ligand_name = _ligand_path_split[-2].split('_')[-2].split('-')[-1] + '-' + _ligand_path_split[-1].split('_')[0] #This requires standartization of the file names - for now we name the ligand just by its rank according to the confidence - e.g. we assume to pass here name='rank2'
             _ligand = Ligand(_ligand_df, name=_ligand_name)
             if _ligand.atom_coords is None:
                 logging.warning("Skipped complex.")
                 continue
 
             _complex = Complex(_target,_ligand)
-            _complex.check_clashes(treshold=self.clash_treshold)
+            _complex.check_clashes(treshold=self.clash_treshold, max_ranking=args.max_ranking)
             self.complexes.append(_complex)
 
     def evaluate_clashes_over_dataset(self, max_ranking: int = None) -> Dict[str,float]:
@@ -234,7 +242,7 @@ class ComplexDataset:
         """
         heavy_clashes, heavy_non_clashes, hydrogen_clashes, hydrogen_non_clashes = 0,0,0,0
         for cplx in self.complexes:
-            if max_ranking is not None and cplx.ligand.ranking < max_ranking:
+            if max_ranking is not None and cplx.ligand.ranking <= max_ranking:
                 heavy_clashes += cplx.heavy_atom_clash
                 heavy_non_clashes += (not cplx.heavy_atom_clash)
                 hydrogen_clashes += cplx.hydrogen_clash
